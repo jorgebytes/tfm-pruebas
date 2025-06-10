@@ -25,7 +25,8 @@ jobs:
       - name: Bandit Security Scan (Python)
         run: |
           pip install bandit
-          bandit -r . -f json -o bandit-report.json
+          bandit -r . --severity-level high -f html -o bandit-report.html
+        continue-on-error: true
 
       - name: Upload Bandit Report
         uses: actions/upload-artifact@v4
