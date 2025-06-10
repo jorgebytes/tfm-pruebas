@@ -21,6 +21,12 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      
+      - name: Upload SonarCloud Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarcloud-report
+          path: .scannerwork/report-task.txt
 
       - name: Bandit Security Scan (Python)
         run: |
@@ -39,11 +45,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: [sast]
     steps:
+      - name: 'Checkout Repository'
+        uses: actions/checkout@v4
+
+      - name: 'Dependency Review'
+        uses: actions/dependency-review-action@v4
+
       - name: Run OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
         id: depcheck
         with:
-          project: 'tfm-prueba-1'
+          project: 'tfm-pruebas'
           path: '.'
           format: 'HTML'
           out: 'reports'
@@ -54,6 +66,12 @@ jobs:
         with:
           name: Dependency-Check Report
           path: reports
+        
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   dast:
     name: DAST Analysis
@@ -61,7 +79,7 @@ jobs:
     needs: [sast, sca] # Se ejecuta después de SAST y SCA
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Start Web Application
         run: |
@@ -76,9 +94,10 @@ jobs:
             sleep 3
           done 
 
-      - name: Nikto Scan
-        run: |
-          nikto -h http://localhost:5000 -output nikto-report.html
+      - name: Scan with nikto
+        uses: thereisnotime/action-nikto@master
+        with:
+          url: "http://localhost:5000"
 
       - name: Upload Nikto Report
         uses: actions/upload-artifact@v4
@@ -102,3 +121,33 @@ jobs:
         run: |
           kill $(cat app.pid) || true
           rm -f app.pid
+
+
+
+          name: SonarCloud Analysis
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sonarcloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Upload SonarCloud Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: sonarcloud-report
+          path: .scannerwork/report-task.txt
