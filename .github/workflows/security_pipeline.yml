@@ -121,33 +121,3 @@ jobs:
         run: |
           kill $(cat app.pid) || true
           rm -f app.pid
-
-
-
-          name: SonarCloud Analysis
-
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened]
-
-jobs:
-  sonarcloud:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v4
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      - name: Upload SonarCloud Report
-        uses: actions/upload-artifact@v3
-        with:
-          name: sonarcloud-report
-          path: .scannerwork/report-task.txt
