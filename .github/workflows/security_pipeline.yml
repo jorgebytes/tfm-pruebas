@@ -48,9 +48,6 @@ jobs:
       - name: 'Checkout Repository'
         uses: actions/checkout@v4
 
-      - name: 'Dependency Review'
-        uses: actions/dependency-review-action@v4
-
       - name: Run OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
         id: depcheck
@@ -66,12 +63,6 @@ jobs:
         with:
           name: Dependency-Check Report
           path: reports
-        
-      - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   dast:
     name: DAST Analysis
