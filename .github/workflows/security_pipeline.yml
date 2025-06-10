@@ -101,7 +101,9 @@ jobs:
         with:
           target: "http://localhost:5000"
           fail_action: false # No falla el pipeline si hay vulnerabilidades
-
+        env:
+          DOCKER_EXTRA_ARGS: "--network=host"
+          
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
