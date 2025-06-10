@@ -68,23 +68,20 @@ jobs:
     name: DAST Analysis
     runs-on: ubuntu-latest
     needs: [sast, sca] # Se ejecuta después de SAST y SCA
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Start Web Application
+      - name: Build app Docker image
         run: |
-          pip install -r src/requirements.txt
-          
-          nohup python src/run.py > app.log 2>&1 &
-          echo $! > app.pid
-                
-          for i in {1..10}; do
-            curl -s http://localhost:5000/ && break
-            echo "[INFO] Esperando la app..."
-            sleep 3
-          done 
+          docker build -t myapp .
 
+      - name: Run app in detached mode
+        run: |
+          docker run -d --rm --name myapp -p 5000:5000 myapp
+          sleep 10
+       
       - name: Scan with nikto
         uses: thereisnotime/action-nikto@master
         with:
@@ -111,5 +108,4 @@ jobs:
 
       - name: Stop Web Application
         run: |
-          kill $(cat app.pid) || true
-          rm -f app.pid
+          docker stop myapp
