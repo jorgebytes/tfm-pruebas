@@ -58,6 +58,13 @@ jobs:
       runs-on: ubuntu-latest
       
       steps:
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop test-app || true
+          docker rm test-app || true
+          docker network rm dast-network || true
+          
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -258,3 +265,10 @@ jobs:
           name: nikto-security-reports
           path: |
             ${{ github.workspace }}/zap-reports/nikto-report.html
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop test-app || true
+          docker rm test-app || true
+          docker network rm dast-network || true
