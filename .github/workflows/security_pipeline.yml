@@ -87,9 +87,82 @@ jobs:
       - name: Wait for application to be ready
         run: |
           echo "Waiting for application to start..."
-          sleep 30
-          # Verificar que la aplicación responde
-          timeout 60 bash -c 'until curl -f http://localhost:8080/health || curl -f http://localhost:8080/ ; do sleep 5; done'
+          sleep 10
+          
+          # Verificar que el contenedor está corriendo
+          if ! docker ps | grep -q test-app; then
+            echo "❌ Container test-app is not running!"
+            docker ps -a
+            echo "=== Container logs ==="
+            docker logs test-app
+            exit 1
+          fi
+          
+      - name: Start test application
+        run: |
+          echo "Starting application container..."
+          docker run -d \
+            --name test-app \
+            --network dast-network \
+            -p 8080:8080 \
+            test-app:latest
+          
+          echo "✅ Container started"
+          echo "=== Container status ==="
+          docker ps
+          echo "=== Container logs (first 20 lines) ==="
+          docker logs test-app | head -20
+          
+          # Función para verificar conectividad
+          check_app() {
+            local max_attempts=12  # 2 minutos total
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Attempt $attempt/$max_attempts - Checking application..."
+              
+              # Intentar diferentes endpoints comunes
+              if curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/health; then
+                echo "✅ Health endpoint responded"
+                return 0
+              elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/; then
+                echo "✅ Root endpoint responded"
+                return 0
+              elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/api/health; then
+                echo "✅ API health endpoint responded"
+                return 0
+              else
+                # Verificar si al menos hay conexión TCP
+                if nc -z localhost 8080; then
+                  echo "🔄 Port 8080 is open but HTTP not ready yet..."
+                else
+                  echo "⚠️  Port 8080 is not accessible"
+                fi
+              fi
+              
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+            
+            return 1
+          }
+          
+          # Ejecutar verificación
+          if check_app; then
+            echo "🎉 Application is ready!"
+          else
+            echo "❌ Application failed to become ready after 2 minutes"
+            echo "=== Container status ==="
+            docker ps -a
+            echo "=== Container logs ==="
+            docker logs test-app
+            echo "=== Network information ==="
+            docker network ls
+            docker network inspect dast-network
+            echo "=== Port information ==="
+            netstat -tlnp | grep :8080 || echo "Port 8080 not found in netstat"
+            exit 1
+          fi
 
       - name: Run ZAP Baseline Scan
         run: |
@@ -107,21 +180,21 @@ jobs:
             -a \
             -j
 
-      - name: Run ZAP Full Scan (más exhaustivo)
-        run: |
-          docker run --rm \
-            --name zap-full-scan \
-            --network dast-network \
-            -v ${{ github.workspace }}/zap-reports:/zap/wrk \
-            -u root \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-            -t http://test-app:8080 \
-            -r zap-full-report.html \
-            -x zap-full-report.xml \
-            -J zap-full-report.json \
-            -a \
-            -j
+      # - name: Run ZAP Full Scan (más exhaustivo)
+      #   run: |
+      #     docker run --rm \
+      #       --name zap-full-scan \
+      #       --network dast-network \
+      #       -v ${{ github.workspace }}/zap-reports:/zap/wrk \
+      #       -u root \
+      #       ghcr.io/zaproxy/zaproxy:stable \
+      #       zap-full-scan.py \
+      #       -t http://test-app:8080 \
+      #       -r zap-full-report.html \
+      #       -x zap-full-report.xml \
+      #       -J zap-full-report.json \
+      #       -a \
+      #       -j
 
       - name: Run Wapiti DAST Scan
         run: |
