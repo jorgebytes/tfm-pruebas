@@ -58,13 +58,6 @@ jobs:
       runs-on: ubuntu-latest
       
       steps:
-      - name: Cleanup
-        if: always()
-        run: |
-          docker stop test-app || true
-          docker rm test-app || true
-          docker network rm dast-network || true
-          
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -82,30 +75,8 @@ jobs:
       - name: Build test application
         run: |
           docker build -t test-app:latest .
-
-      - name: Start test application
-        run: |
-          docker run -d \
-            --name test-app \
-            --network dast-network \
-            -p 8080:8080 \
-            test-app:latest
-
-      - name: Wait for application to be ready
-        run: |
-          echo "Waiting for application to start..."
-          sleep 10
-          
-          # Verificar que el contenedor está corriendo
-          if ! docker ps | grep -q test-app; then
-            echo "❌ Container test-app is not running!"
-            docker ps -a
-            echo "=== Container logs ==="
-            docker logs test-app
-            exit 1
-          fi
-          
-      - name: Start test application
+        
+      - name: Start test application and wait for availability
         run: |
           echo "Starting application container..."
           docker run -d \
@@ -130,20 +101,20 @@ jobs:
               
               # Intentar diferentes endpoints comunes
               if curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/health; then
-                echo "✅ Health endpoint responded"
+                echo "Health endpoint responded"
                 return 0
               elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/; then
-                echo "✅ Root endpoint responded"
+                echo "Root endpoint responded"
                 return 0
               elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:8080/api/health; then
-                echo "✅ API health endpoint responded"
+                echo "API health endpoint responded"
                 return 0
               else
                 # Verificar si al menos hay conexión TCP
                 if nc -z localhost 8080; then
-                  echo "🔄 Port 8080 is open but HTTP not ready yet..."
+                  echo "Port 8080 is open but HTTP not ready yet..."
                 else
-                  echo "⚠️  Port 8080 is not accessible"
+                  echo "Port 8080 is not accessible"
                 fi
               fi
               
