@@ -162,6 +162,7 @@ jobs:
             -r zap-baseline-report.html \
             -x zap-baseline-report.xml \
             -J zap-baseline-report.json \
+            -l High \
             -a \
             -j
 
@@ -205,8 +206,85 @@ jobs:
             ${{ github.workspace }}/zap-reports/zap-*.html
             ${{ github.workspace }}/zap-reports/zap-*.xml
             ${{ github.workspace }}/zap-reports/zap-*.json
+      
+      - name: Convert ZAP results to SARIF
+        run: |
+          # Install tools to convert XML into SARIF
+          pip install sarif-om
+          
+          # ZAP XML results to SARIF conversion
+          if [ -f "${{ github.workspace }}/zap-reports/zap-baseline-report.xml" ]; then
+            python3 -c "
+          import json
+          import xml.etree.ElementTree as ET
+          from datetime import datetime
 
-      - name: Cleanup
+          def zap_to_sarif(xml_file, sarif_file):
+              tree = ET.parse(xml_file)
+              root = tree.getroot()
+              
+              sarif = {
+                  'version': '2.1.0',
+                  'runs': [{
+                      'tool': {
+                          'driver': {
+                              'name': 'OWASP ZAP',
+                              'version': '2.14.0',
+                              'informationUri': 'https://owasp.org/www-project-zap/'
+                          }
+                      },
+                      'results': []
+                  }]
+              }
+              
+              for site in root.findall('.//site'):
+                  for alert in site.findall('.//alertitem'):
+                      name = alert.find('name')
+                      desc = alert.find('desc')
+                      risk = alert.find('riskdesc')
+                      confidence = alert.find('confidence')
+                      uri = alert.find('uri')
+                      
+                      if name is not None and desc is not None:
+                          result = {
+                              'ruleId': name.text,
+                              'message': {'text': desc.text or 'No description'},
+                              'level': 'warning',
+                              'locations': [{
+                                  'physicalLocation': {
+                                      'artifactLocation': {
+                                          'uri': uri.text if uri is not None else 'unknown'
+                                      }
+                                  }
+                              }]
+                          }
+                          
+                          if risk is not None:
+                              if 'High' in risk.text:
+                                  result['level'] = 'error'
+                              elif 'Medium' in risk.text:
+                                  result['level'] = 'warning'
+                              else:
+                                  result['level'] = 'note'
+                          
+                          sarif['runs'][0]['results'].append(result)
+              
+              with open(sarif_file, 'w') as f:
+                  json.dump(sarif, f, indent=2)
+
+          if __name__ == '__main__':
+              zap_to_sarif('${{ github.workspace }}/zap-reports/zap-baseline-report.xml', '${{ github.workspace }}/zap-reports/zap-baseline.sarif')
+          "
+                  fi
+
+      - name: Upload ZAP SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ github.workspace }}/zap-reports/zap-baseline.sarif
+          category: "zap-baseline"
+        if: always() && hashFiles('${{ github.workspace }}/zap-reports/zap-baseline.sarif') != ''
+
+      - name: Cleanup Docker
         if: always()
         run: |
           docker stop test-app || true
