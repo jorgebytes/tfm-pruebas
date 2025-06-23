@@ -162,7 +162,7 @@ jobs:
             -r zap-baseline-report.html \
             -x zap-baseline-report.xml \
             -J zap-baseline-report.json \
-            -l High \
+            -I \
             -a \
             -j
 
