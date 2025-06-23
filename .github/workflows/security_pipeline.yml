@@ -10,52 +10,110 @@ on:
   workflow_dispatch:
 
 jobs:
-  # sast:
-  #   name: SAST Analysis
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
+  sast-codeql:
+    name: CodeQL SAST Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
 
-  #     - name: SonarQube Scan
-  #       uses: SonarSource/sonarqube-scan-action@v5
-  #       env:
-  #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['python','javascript']
 
-  #     - name: Bandit Security Scan (Python)
-  #       run: |
-  #         pip install bandit
-  #         bandit -r . -f json -o bandit-report.json
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-  #     - name: Upload Bandit Report
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: bandit-report
-  #         path: bandit-report.json
+      - name: Initizlize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+      
+      - name: CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
 
-  # sca:
-  #   name: Dependency Vulnerability Scan
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Run OWASP Dependency-Check
-  #       uses: dependency-check/Dependency-Check_Action@main
-  #       id: depcheck
-  #       with:
-  #         project: 'tfm-prueba-1'
-  #         path: '.'
-  #         format: 'HTML'
-  #         out: 'reports'
-  #         args: '--failOnCVSS 7 --enableRetired'
+  sast-sonarcloud:
+    name: SAST Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  #     - name: Upload Dependency-Check Report
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: Dependency-Check Report
-  #         path: reports
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5.2.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  sca:
+    name: Dependency analysis with Trivy
+    runs-on: ubuntu-latest
+    needs: [sast-codeql,sast-sonarcloud]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Create reports directory
+      run: mkdir -p reports/trivy
+
+    - name: Build Docker image
+      run: |
+        docker build -t web-app:latest .
+
+    - name: Run Trivy vulnerability scanner on repository packages and dependency files
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs' #This checks vulnerabilities on dependencies by checking requieremtnes.txt and similar files
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'reports/trivy/trivy-repo.sarif'
+
+    - name: Run Trivy config scanner on IaC and Dockerfiles
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'reports/trivy/trivy-config.sarif'
+
+    - name: Run Trivy vulnerability scanner on Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'web-app:latest'
+        format: 'sarif'
+        output: 'reports/trivy/trivy-image.sarif'
+
+    - name: Upload Trivy SARIF results
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: reports/trivy/trivy-repo.sarif
+        category: "trivy-repository"
+      if: always()
+
+    - name: Upload Trivy Image SARIF results
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: reports/trivy/trivy-image.sarif
+        category: "trivy-image"
+      if: always()
+
+    - name: Upload Trivy Config SARIF results
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: reports/trivy/trivy-config.sarif
+        category: "trivy-config"
+      if: always()
 
   dast:
       name: Pruebas DAST
       runs-on: ubuntu-latest
+      needs: [sca]
       
       steps:
       - name: Checkout repository
@@ -76,71 +134,19 @@ jobs:
         run: |
           docker build -t test-app:latest .
         
-      - name: Start test application and wait for availability
+      - name: Start test application and wait for it to be ready
         run: |
-          echo "Starting application container..."
           docker run -d \
             --name test-app \
             --network dast-network \
-            -p 5000:5000 \
+            -p 5080:5080 \
             test-app:latest
-          
-          echo "✅ Container started"
-          echo "=== Container status ==="
-          docker ps
-          echo "=== Container logs (first 20 lines) ==="
-          docker logs test-app | head -20
-          
-          # Función para verificar conectividad
-          check_app() {
-            local max_attempts=12  # 2 minutos total
-            local attempt=1
-            
-            while [ $attempt -le $max_attempts ]; do
-              echo "Attempt $attempt/$max_attempts - Checking application..."
-              
-              # Intentar diferentes endpoints comunes
-              if curl -f -s --connect-timeout 5 --max-time 10 http://localhost:5000/health; then
-                echo "Health endpoint responded"
-                return 0
-              elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:5000/; then
-                echo "Root endpoint responded"
-                return 0
-              elif curl -f -s --connect-timeout 5 --max-time 10 http://localhost:5000/api/health; then
-                echo "API health endpoint responded"
-                return 0
-              else
-                # Verificar si al menos hay conexión TCP
-                if nc -z localhost 5000; then
-                  echo "Port 5000 is open but HTTP not ready yet..."
-                else
-                  echo "Port 5000 is not accessible"
-                fi
-              fi
-              
-              sleep 5
-              attempt=$((attempt + 1))
-            done
-            
-            return 1
-          }
-          
-          # Ejecutar verificación
-          if check_app; then
-            echo "🎉 Application is ready!"
-          else
-            echo "❌ Application failed to become ready after 2 minutes"
-            echo "=== Container status ==="
-            docker ps -a
-            echo "=== Container logs ==="
-            docker logs test-app
-            echo "=== Network information ==="
-            docker network ls
-            docker network inspect dast-network
-            echo "=== Port information ==="
-            netstat -tlnp | grep :5000 || echo "Port 5000 not found in netstat"
-            exit 1
-          fi
+
+          echo "Waiting for application to start..."
+          sleep 30
+          # Verificar que la aplicación responde
+          timeout 60 bash -c 'until curl -f http://localhost:5000/health || curl -f http://localhost:5000/ ; do sleep 5; done'
+
 
       - name: Run ZAP Baseline Scan
         run: |
@@ -158,6 +164,9 @@ jobs:
             -a \
             -j
 
+      ###########################
+      # ZAP Full Scan consumes a great time and resources,thus it is left commented. In order to execute it uncomment the code, being responsible of the usage of GitHub Actions minutes
+      ###########################
       # - name: Run ZAP Full Scan (más exhaustivo)
       #   run: |
       #     docker run --rm \
@@ -173,31 +182,6 @@ jobs:
       #       -J zap-full-report.json \
       #       -a \
       #       -j
-
-      - name: Run Wapiti DAST Scan
-        run: |
-          docker run --rm \
-            --name wapiti-scan \
-            --network dast-network \
-            -v ${{ github.workspace }}/zap-reports:/reports \
-            wapiti3/wapiti:latest \
-            wapiti -u http://test-app:5000 \
-            --format html,json,xml \
-            --output /reports/wapiti-report \
-            --flush-attacks \
-            --max-depth 3 \
-            --max-links-per-page 50
-
-      - name: Run Nikto Scan (herramienta adicional)
-        run: |
-          docker run --rm \
-            --name nikto-scan \
-            --network dast-network \
-            -v ${{ github.workspace }}/zap-reports:/reports \
-            sullo/nikto:latest \
-            -h http://test-app:5000 \
-            -output /reports/nikto-report.html \
-            -Format html
 
       - name: Check application logs (debugging)
         if: always()
@@ -220,22 +204,6 @@ jobs:
             ${{ github.workspace }}/zap-reports/zap-*.html
             ${{ github.workspace }}/zap-reports/zap-*.xml
             ${{ github.workspace }}/zap-reports/zap-*.json
-
-      - name: Upload Wapiti Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wapiti-security-reports
-          path: |
-            ${{ github.workspace }}/zap-reports/wapiti-report.*
-
-      - name: Upload Nikto Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nikto-security-reports
-          path: |
-            ${{ github.workspace }}/zap-reports/nikto-report.html
 
       - name: Cleanup
         if: always()
